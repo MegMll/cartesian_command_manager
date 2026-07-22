@@ -1,0 +1,62 @@
+cartesian_command_manager:
+  update_rate_hz:
+    type: double
+    default_value: 100.0
+    description: "Command manager update loop frequency in Hz."
+
+  topics:
+    joystick_command:
+      type: string
+      default_value: "/joystick_cartesian_command"
+      description: "Topic carrying joystick Cartesian commands."
+    geometric_state:
+      type: string
+      default_value: "/geometric_state"
+      description: "Topic carrying geometric state commands."
+    behaviour_state:
+      type: string
+      default_value: "/behaviour_state"
+      description: "Topic carrying behaviour state commands."
+    ee_pose:
+      type: string
+      default_value: "/ee_pose"
+      description: "Topic carrying current end-effector pose."
+    ee_vel:
+      type: string
+      default_value: "/ee_velocity"
+      description: "Topic carrying current end-effector velocity."
+    ee_jac:
+      type: string
+      default_value: "/ee_jacobian"
+      description: "Topic carrying current end-effector Jacobian as a Float64MultiArray."
+    output_command:
+      type: string
+      default_value: "/cartesian_command"
+      description: "Topic used by the command manager output publisher."
+
+  inputs:
+    joystick:
+      timeout_sec:
+        type: double
+        default_value: 0.2
+        description: "Maximum joystick command age before it is ignored."
+      enabled:
+        type: bool
+        default_value: true
+        description: "Whether joystick input is enabled at startup."
+    visual_servoing:
+      timeout_sec:
+        type: double
+        default_value: 0.2
+        description: "Maximum visual-servoing command age before it is ignored."
+      enabled:
+        type: bool
+        default_value: true
+        description: "Whether visual-servoing input is enabled at startup."
+
+  shapers:
+    snake:
+      gain:
+        type: double
+        default_value: 3.0
+        description: "Scaling applied to tool_z_axis cross linear_velocity in snake mode."

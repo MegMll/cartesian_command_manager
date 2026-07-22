@@ -1,0 +1,84 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 250  # Hz
+
+    qontrol_explorer:
+      type: qontrol_controller/QontrolVelocityController
+      auto_start: false
+
+    gripper_controller:
+      type: forward_command_controller/ForwardCommandController
+      auto_start: false
+
+qontrol_explorer:
+  ros__parameters:
+    # Base parameters
+    robot_description_origin: robot_state_publisher
+    tip_frame: tool0
+    root_frame: base_link
+    state_interface:
+      - position
+      - velocity
+      - effort
+    robot_command: position
+
+    # Velocity parameters
+    command_max_linear_velocity: 0.05
+    command_max_angular_velocity: 1.0
+    refresh_mapping: True
+    open_loop: True
+    input_topic_name: /cartesian_command
+    regularisation_weight: 1e-2
+    root_frame_control: True
+    deadzone: 0.1
+    velocity_limit: 0.5
+    horizon: 15
+    p_gain: 100.0
+    lambda: 0.1
+    points_collision: [0.0, -0.6, 0.0, 0.0, -0.6, 1.0]
+    wall_constraint_horizon: 15
+    d_secure: 0.2
+    d_prevent: 0.2
+    elbow_frame: "link_3"
+    handle_frame: "link_5"
+
+cartesian_command_manager:
+  ros__parameters:
+    update_rate_hz: 100.0
+
+    topics:
+      joystick_command: "/joystick_cartesian_command"
+      geometric_state: "/geometric_state"
+      behaviour_state: "/behaviour_state"
+      ee_pose: "/ee_pose"
+      ee_vel: "/ee_velocity"
+      ee_jac: "/ee_jacobian"
+      output_command: "/cartesian_command"
+
+    inputs:
+      joystick:
+        timeout_sec: 0.2
+        enabled: true
+      visual_servoing:
+        timeout_sec: 0.2
+        enabled: true
+
+    shapers:
+      snake:
+        gain: 3.0
+
+joystick_command_mapper:
+  ros__parameters:
+    joy_topic: "/joy"
+    output_topic: "/joystick_cartesian_command"
+    geometric_state_topic: "/geometric_state"
+    behaviour_state_topic: "/behaviour_state"
+    output_frame_id: ""
+    deadzone: 0.2
+    max_linear: 0.07
+    max_angular: 0.014
+    rotation_button_index: 2
+    translation_button_index: 1
+    jaco_button_index: 11
+    snake_button_index: 10
+    shared_button_index: 3
