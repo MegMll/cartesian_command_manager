@@ -60,6 +60,10 @@ namespace cartesian_command_manager
       {
         return manager_core::BehaviourState::SHARED;
       }
+      if (normalized == "homing" || normalized == "go_home")
+      {
+        return manager_core::BehaviourState::HOMING;
+      }
 
       return std::nullopt;
     }
@@ -111,10 +115,33 @@ namespace cartesian_command_manager
     ee_pose_topic_ = params_.topics.ee_pose;
     ee_vel_topic_ = params_.topics.ee_vel;
     ee_jac_topic_ = params_.topics.ee_jac;
+    joint_states_topic_ = params_.topics.joint_states;
     output_command_topic_ = params_.topics.output_command;
 
     manager_core::CommandPipelineConfig pipeline_config;
     pipeline_config.snake.gain = params_.shapers.snake.gain;
+    pipeline_config.homing.joint_names = params_.behaviours.homing.joint_names;
+    pipeline_config.homing.positions = params_.behaviours.homing.positions;
+    pipeline_config.homing.gain = params_.behaviours.homing.gain;
+    pipeline_config.homing.max_joint_velocity = params_.behaviours.homing.max_joint_velocity;
+    pipeline_config.homing.max_linear_velocity = params_.behaviours.homing.max_linear_velocity;
+    pipeline_config.homing.max_angular_velocity = params_.behaviours.homing.max_angular_velocity;
+    pipeline_config.homing.position_tolerance = params_.behaviours.homing.position_tolerance;
+
+    if (pipeline_config.homing.joint_names.empty() ||
+        pipeline_config.homing.joint_names.front().empty())
+    {
+      RCLCPP_WARN(get_logger(),
+                  "Homing behaviour has no configured joints; GO_HOME will publish zero commands");
+    }
+    else if (pipeline_config.homing.joint_names.size() != pipeline_config.homing.positions.size())
+    {
+      RCLCPP_WARN(get_logger(),
+                  "Homing behaviour has %zu joint names but %zu positions; GO_HOME will publish "
+                  "zero commands",
+                  pipeline_config.homing.joint_names.size(),
+                  pipeline_config.homing.positions.size());
+    }
 
     pipeline_.configure(pipeline_config);
     pipeline_.setBehaviourState(current_behaviour_state_);
@@ -138,6 +165,9 @@ namespace cartesian_command_manager
     ee_jac_sub_ = create_subscription<std_msgs::msg::Float64MultiArray>(
         ee_jac_topic_, 10,
         std::bind(&CartesianCommandManager::eeJacCallback, this, std::placeholders::_1));
+    joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
+        joint_states_topic_, 10,
+        std::bind(&CartesianCommandManager::jointStateCallback, this, std::placeholders::_1));
 
     geometric_state_sub_ = create_subscription<std_msgs::msg::String>(
         geometric_state_topic_, 10,
@@ -150,6 +180,7 @@ namespace cartesian_command_manager
   void CartesianCommandManager::setupPublishers()
   {
     cmd_pub_ = create_publisher<geometry_msgs::msg::TwistStamped>(output_command_topic_, 10);
+    behaviour_state_pub_ = create_publisher<std_msgs::msg::String>(behaviour_state_topic_, 10);
   }
 
   void CartesianCommandManager::joystickCommandCallback(
@@ -171,9 +202,9 @@ namespace cartesian_command_manager
     }
 
     const auto requested_state = *geometric_state;
-    const auto next_state =
-        requested_state == current_geometric_state_ ? manager_core::GeometricState::BOTH
-                                                    : requested_state;
+    const auto next_state = requested_state == current_geometric_state_
+                                ? manager_core::GeometricState::BOTH
+                                : requested_state;
 
     if (!pipeline_.setGeometricState(next_state))
     {
@@ -194,9 +225,9 @@ namespace cartesian_command_manager
     }
 
     const auto requested_state = *behaviour_state;
-    const auto next_state =
-        requested_state == current_behaviour_state_ ? manager_core::BehaviourState::PASSTHROUGH
-                                                    : requested_state;
+    const auto next_state = requested_state == current_behaviour_state_
+                                ? manager_core::BehaviourState::PASSTHROUGH
+                                : requested_state;
 
     if (!pipeline_.setBehaviourState(next_state))
     {
@@ -307,16 +338,52 @@ namespace cartesian_command_manager
     robot_context_.ee_jac = std::move(jacobian);
   }
 
+  void CartesianCommandManager::jointStateCallback(
+      const sensor_msgs::msg::JointState::SharedPtr msg)
+  {
+    if (msg->name.size() != msg->position.size())
+    {
+      RCLCPP_WARN(get_logger(), "Ignoring JointState message with %zu names and %zu positions",
+                  msg->name.size(), msg->position.size());
+      return;
+    }
+
+    robot_context_.joint_names = msg->name;
+    robot_context_.joint_positions =
+        Eigen::VectorXd::Zero(static_cast<Eigen::Index>(msg->position.size()));
+
+    for (std::size_t i = 0; i < msg->position.size(); ++i)
+    {
+      robot_context_.joint_positions(static_cast<Eigen::Index>(i)) = msg->position[i];
+    }
+  }
+
   void CartesianCommandManager::updateVelocity()
   {
-    const auto command = pipeline_.update(now().seconds(), 1.0 / update_rate_hz_, robot_context_);
+    const bool homing_reached = current_behaviour_state_ == manager_core::BehaviourState::HOMING &&
+                                pipeline_.isHomingTargetReached(robot_context_);
 
+    const auto command = pipeline_.update(now().seconds(), 1.0 / update_rate_hz_, robot_context_);
     geometry_msgs::msg::TwistStamped msg;
     msg.header.stamp = now();
     if (command)
-    {
       fillTwistMessage(*command, msg.twist);
-    }
+
     cmd_pub_->publish(msg);
+
+    if (homing_reached)
+    {
+      pipeline_.setBehaviourState(manager_core::BehaviourState::PASSTHROUGH);
+      current_behaviour_state_ = manager_core::BehaviourState::PASSTHROUGH;
+      publishBehaviourState("passthrough");
+      RCLCPP_INFO(get_logger(), "Homing target reached, switching behaviour to passthrough");
+    }
+  }
+
+  void CartesianCommandManager::publishBehaviourState(const std::string &state)
+  {
+    std_msgs::msg::String msg;
+    msg.data = state;
+    behaviour_state_pub_->publish(msg);
   }
 } // namespace cartesian_command_manager

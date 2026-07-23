@@ -3,6 +3,9 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
+#include <string>
+#include <vector>
+
 namespace manager_core
 {
 
@@ -36,7 +39,8 @@ namespace manager_core
   enum class BehaviourState
   {
     PASSTHROUGH,
-    SHARED
+    SHARED,
+    HOMING
   };
 
   enum class GeometricState
@@ -65,5 +69,7 @@ namespace manager_core
     CartesianPose ee_pose;
     CartesianVelocity ee_vel;
     Eigen::MatrixXd ee_jac;
+    std::vector<std::string> joint_names;
+    Eigen::VectorXd joint_positions;
   };
 } // namespace manager_core

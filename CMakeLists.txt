@@ -9,6 +9,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(generate_parameter_library REQUIRED)
 find_package(Eigen3 REQUIRED)
 
@@ -19,6 +20,7 @@ generate_parameter_library(
 
 add_library(${PROJECT_NAME}_core
   src/core/command_pipeline.cpp
+  src/core/behaviours/homing.cpp
   src/core/input_manager.cpp
   src/core/state_machine.cpp
   src/core/shapers/geometric/jaco.cpp
@@ -50,6 +52,7 @@ ament_target_dependencies(${PROJECT_NAME}_ros
   rclcpp
   std_msgs
   geometry_msgs
+  sensor_msgs
 )
 
 add_executable(cartesian_command_manager_node
@@ -94,6 +97,7 @@ ament_export_dependencies(
   generate_parameter_library
   geometry_msgs
   rclcpp
+  sensor_msgs
   std_msgs
 )
 

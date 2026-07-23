@@ -6,6 +6,7 @@ namespace manager_core
   void CommandPipeline::configure(const CommandPipelineConfig &config)
   {
     geometric_shapers_.clear();
+    homing_behaviour_ = HomingBehaviour(config.homing);
 
     registerGeometricShaper(GeometricState::JACO, std::make_unique<JacoShaper>());
     registerGeometricShaper(GeometricState::SNAKE, std::make_unique<SnakeShaper>(config.snake));
@@ -45,13 +46,40 @@ namespace manager_core
   std::optional<CartesianCommand> CommandPipeline::update(double now_sec, double dt_sec,
                                                           const RobotContext &context)
   {
-    auto command = input_manager_.getFullCommand(now_sec);
+    auto command = applyBehaviour(now_sec, context);
     if (!command)
     {
       return std::nullopt;
     }
 
     CartesianCommand output = *command;
+    if (state_machine_.behaviour_state() == BehaviourState::HOMING)
+    {
+      return output;
+    }
+
+    applyGeometricState(output, context, dt_sec);
+    return output;
+  }
+
+  std::optional<CartesianCommand> CommandPipeline::applyBehaviour(double now_sec,
+                                                                  const RobotContext &context) const
+  {
+    switch (state_machine_.behaviour_state())
+    {
+    case BehaviourState::PASSTHROUGH:
+    case BehaviourState::SHARED:
+      return input_manager_.getFullCommand(now_sec);
+    case BehaviourState::HOMING:
+      return homing_behaviour_.update(context);
+    }
+
+    return std::nullopt;
+  }
+
+  void CommandPipeline::applyGeometricState(CartesianCommand &output, const RobotContext &context,
+                                            double dt_sec)
+  {
     const auto geometric_state = state_machine_.geometric_state();
 
     switch (geometric_state)
@@ -68,12 +96,16 @@ namespace manager_core
       applyRegisteredGeometricShaper(geometric_state, output, context, dt_sec);
       break;
     }
-    return output;
   }
 
   std::vector<InputSource> CommandPipeline::getValidInputSources(double now_sec) const
   {
     return input_manager_.getValidSources(now_sec);
+  }
+
+  bool CommandPipeline::isHomingTargetReached(const RobotContext &context) const
+  {
+    return homing_behaviour_.isTargetReached(context);
   }
 
   void CommandPipeline::registerGeometricShaper(GeometricState state,

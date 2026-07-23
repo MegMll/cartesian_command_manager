@@ -27,8 +27,12 @@ cartesian_command_manager:
       description: "Topic carrying current end-effector velocity."
     ee_jac:
       type: string
-      default_value: "/ee_jacobian"
+      default_value: "/ee_jac"
       description: "Topic carrying current end-effector Jacobian as a Float64MultiArray."
+    joint_states:
+      type: string
+      default_value: "/joint_states"
+      description: "Topic carrying current joint positions."
     output_command:
       type: string
       default_value: "/cartesian_command"
@@ -60,3 +64,34 @@ cartesian_command_manager:
         type: double
         default_value: 3.0
         description: "Scaling applied to tool_z_axis cross linear_velocity in snake mode."
+
+  behaviours:
+    homing:
+      joint_names:
+        type: string_array
+        default_value: [""]
+        description: "Joint names used by the homing behaviour. Order must match the Jacobian columns."
+      positions:
+        type: double_array
+        default_value: [0.0]
+        description: "Home joint positions, in radians, in joint_names order."
+      gain:
+        type: double
+        default_value: 1.0
+        description: "Proportional gain from joint position error to desired joint velocity."
+      max_joint_velocity:
+        type: double
+        default_value: 0.2
+        description: "Maximum norm of the generated joint velocity."
+      max_linear_velocity:
+        type: double
+        default_value: 0.05
+        description: "Maximum norm of the generated Cartesian linear velocity."
+      max_angular_velocity:
+        type: double
+        default_value: 0.1
+        description: "Maximum norm of the generated Cartesian angular velocity."
+      position_tolerance:
+        type: double
+        default_value: 0.01
+        description: "Maximum absolute joint error considered close enough to home."
