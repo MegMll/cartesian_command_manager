@@ -29,7 +29,8 @@ The manager also subscribes to robot context topics used by geometric shapers:
 ```text
 /ee_pose
 /ee_velocity
-/ee_jacobian
+/ee_jac
+/joint_states
 ```
 
 ## Responsibilities
@@ -64,7 +65,8 @@ Configured in `bringup/config/explorer_params.yaml`:
 | `/behaviour_state` | `std_msgs/msg/String` | input | Behaviour state request |
 | `/ee_pose` | `geometry_msgs/msg/PoseStamped` | input | Current end-effector pose |
 | `/ee_velocity` | `geometry_msgs/msg/TwistStamped` | input | Current end-effector velocity |
-| `/ee_jacobian` | `std_msgs/msg/Float64MultiArray` | input | Current end-effector Jacobian |
+| `/ee_jac` | `std_msgs/msg/Float64MultiArray` | input | Current end-effector Jacobian |
+| `/joint_states` | `sensor_msgs/msg/JointState` | input | Current joint positions for homing |
 | `/cartesian_command` | `geometry_msgs/msg/TwistStamped` | output | Final command sent to the velocity controller |
 
 ## States
@@ -81,11 +83,16 @@ Behaviour states accepted by the manager:
 
 - `passthrough`: default behaviour.
 - `shared`: accepted by the state machine, but currently does not change the command in `CommandPipeline::update()`.
+- `homing` or `go_home`: generate an autonomous Cartesian command that drives configured joints toward the configured home positions.
 
 Startup defaults:
 
 - Geometric state: `both`
 - Behaviour state: `passthrough`
+
+Homing configuration is under `behaviours.homing` in `bringup/config/explorer_params.yaml`. The configured joint order must match the Jacobian column order.
+
+When homing reaches `position_tolerance`, the manager publishes one zero command and automatically switches behaviour back to `passthrough`.
 
 Repeated state requests currently behave like toggles:
 
@@ -119,6 +126,8 @@ ros2 launch cartesian_command_manager explorer.launch.py use_simulation:=false
 
 For first tests, use simulation, conservative velocity limits, and an external stop path. The joystick mapper limits are configured in `bringup/config/explorer_params.yaml` with `max_linear`, `max_angular`, and `deadzone`.
 
+The joystick homing button is configured with `homing_button_index`. It is disabled by default with `-1`; assign a real button index only after the homing joint target has been checked in simulation.
+
 ## Manual Checks
 
 Publish a direct Cartesian command:
@@ -139,6 +148,7 @@ Change behaviour state:
 
 ```bash
 ros2 topic pub --once /behaviour_state std_msgs/msg/String "{data: shared}"
+ros2 topic pub --once /behaviour_state std_msgs/msg/String "{data: go_home}"
 ros2 topic pub --once /behaviour_state std_msgs/msg/String "{data: passthrough}"
 ```
 

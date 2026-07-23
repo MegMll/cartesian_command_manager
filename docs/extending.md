@@ -29,8 +29,9 @@ If a new source already produces Cartesian velocity, connect it directly to the 
 2. `CartesianCommandManager` converts the ROS message to `manager_core::CartesianCommand`.
 3. `InputManager` stores the command with a timestamp.
 4. On each update, `InputManager::getFullCommand()` averages all enabled, non-timeout commands with positive weight.
-5. `CommandPipeline::update()` applies the current geometric state.
-6. The manager publishes the final `geometry_msgs/msg/TwistStamped`.
+5. `CommandPipeline::update()` applies the active behaviour.
+6. If the behaviour allows it, `CommandPipeline::update()` applies the current geometric state.
+7. The manager publishes the final `geometry_msgs/msg/TwistStamped`.
 
 Current multi-input handling is in:
 
@@ -189,6 +190,10 @@ Use a behaviour state for policy-level command handling, for example choosing ho
 
 Important: adding the enum and parser only makes the state selectable. You must also implement what the behaviour does in the pipeline.
 
+The current strategy is behaviour first, then geometric shaping only for behaviours where that is meaningful. `PASSTHROUGH` and `SHARED` use geometric shaping. `HOMING` bypasses geometric shaping because it generates an autonomous command and should not be accidentally broken by `rotation`, `translation`, `snake`, or another user-selected geometric mode.
+
+`HOMING` also owns its completion transition: when the configured joint error is inside tolerance, the manager switches back to `PASSTHROUGH` and republishes `passthrough` on the behaviour topic so the joystick mapper stays synchronized.
+
 ### 1. Add The Enum
 
 Edit `include/cartesian_command_manager/core/types.hpp`:
@@ -198,6 +203,7 @@ enum class BehaviourState
 {
   PASSTHROUGH,
   SHARED,
+  HOMING,
   MY_BEHAVIOUR
 };
 ```
@@ -406,7 +412,7 @@ Current accepted strings:
 
 ```text
 geometric: both, translation, rotation, jaco, snake
-behaviour: passthrough, shared
+behaviour: passthrough, shared, homing, go_home
 ```
 
 The manager rejects unknown strings and keeps the previous state.
