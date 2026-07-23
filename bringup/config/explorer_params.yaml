@@ -23,8 +23,8 @@ qontrol_explorer:
     robot_command: position
 
     # Velocity parameters
-    command_max_linear_velocity: 0.05
-    command_max_angular_velocity: 1.0
+    command_max_linear_velocity: 0.15
+    command_max_angular_velocity: 0.4
     refresh_mapping: True
     open_loop: True
     input_topic_name: /cartesian_command
@@ -52,7 +52,8 @@ cartesian_command_manager:
       behaviour_state: "/behaviour_state"
       ee_pose: "/ee_pose"
       ee_vel: "/ee_velocity"
-      ee_jac: "/ee_jacobian"
+      ee_jac: "/ee_jac"
+      joint_states: "/joint_states"
       output_command: "/cartesian_command"
 
     inputs:
@@ -67,6 +68,16 @@ cartesian_command_manager:
       snake:
         gain: 3.0
 
+    behaviours:
+      homing:
+        joint_names: ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
+        positions: [2.5, 0.3, -2.4, 2.97, 1.2, -0.5]
+        gain: 1.0
+        max_joint_velocity: 0.2
+        max_linear_velocity: 0.14
+        max_angular_velocity: 0.4
+        position_tolerance: 0.05
+
 joystick_command_mapper:
   ros__parameters:
     joy_topic: "/joy"
@@ -75,10 +86,11 @@ joystick_command_mapper:
     behaviour_state_topic: "/behaviour_state"
     output_frame_id: ""
     deadzone: 0.2
-    max_linear: 0.07
-    max_angular: 0.014
+    max_linear: 0.5
+    max_angular: 0.4
     rotation_button_index: 2
     translation_button_index: 1
     jaco_button_index: 11
     snake_button_index: 10
-    shared_button_index: 3
+    shared_button_index: -1
+    homing_button_index: 4
