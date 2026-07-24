@@ -11,14 +11,14 @@ The main design rule is simple: every command source should publish a `geometry_
 - Input freshness and command combination.
 - State parsing and state machine validation.
 - Geometric command shaping.
+- Input command frame normalization.
 - Final `TwistStamped` output.
 
 `joystick_command_mapper` owns:
 
 - `sensor_msgs/msg/Joy` parsing.
 - Axis mapping.
-- Deadzone and norm scaling.
-- Joystick velocity saturation.
+- Deadzone.
 - Button-to-state mapping.
 
 If a new source already produces Cartesian velocity, connect it directly to the manager. If it starts from a device-specific message, create or update a mapper node outside the manager.
@@ -27,11 +27,12 @@ If a new source already produces Cartesian velocity, connect it directly to the 
 
 1. A command source publishes `geometry_msgs/msg/TwistStamped`.
 2. `CartesianCommandManager` converts the ROS message to `manager_core::CartesianCommand`.
-3. `InputManager` stores the command with a timestamp.
-4. On each update, `InputManager::getFullCommand()` averages all enabled, non-timeout commands with positive weight.
-5. `CommandPipeline::update()` applies the active behaviour.
-6. If the behaviour allows it, `CommandPipeline::update()` applies the current geometric state.
-7. The manager publishes the final `geometry_msgs/msg/TwistStamped`.
+3. The manager transforms input commands into the configured output frame.
+4. `InputManager` stores the transformed command with a timestamp.
+5. On each update, `InputManager::getFullCommand()` averages all enabled, non-timeout commands with positive weight.
+6. `CommandPipeline::update()` applies the active behaviour.
+7. If the behaviour allows it, `CommandPipeline::update()` applies the current geometric state.
+8. The manager publishes the final `geometry_msgs/msg/TwistStamped`.
 
 Current multi-input handling is in:
 
@@ -263,7 +264,7 @@ Typical changes in the mapper package:
 - Add a parameter in its parameter YAML or declared parameters.
 - Add a button index member.
 - Call the existing behaviour-button handling with the new state string.
-- Add the button to the shared launch config in `bringup/config/explorer_params.yaml`.
+- Add the button to the common launch config in `bringup/config/explorer_params.yaml`.
 
 ### 6. Test The Behaviour
 
@@ -412,7 +413,7 @@ Current accepted strings:
 
 ```text
 geometric: both, translation, rotation, jaco, snake
-behaviour: passthrough, shared, homing, go_home
+behaviour: passthrough, homing, go_home
 ```
 
 The manager rejects unknown strings and keeps the previous state.

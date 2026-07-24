@@ -42,6 +42,7 @@ The manager also subscribes to robot context topics used by geometric shapers:
 - Combines all currently valid input commands.
 - Parses geometric and behaviour state strings.
 - Applies geometric command shaping.
+- Transforms input commands to the configured output frame before combining them.
 - Publishes the final `geometry_msgs/msg/TwistStamped` command.
 
 Current implementation note: the joystick input is wired end to end. `VISUAL_SERVOING` and its parameters exist as the next input source, but the ROS subscription and callback are not implemented yet.
@@ -49,8 +50,7 @@ Current implementation note: the joystick input is wired end to end. `VISUAL_SER
 `joystick_command_mapper`:
 
 - Subscribes to `sensor_msgs/msg/Joy`.
-- Applies joystick deadzone and norm scaling.
-- Saturates joystick output with configured max linear and angular velocity.
+- Applies joystick deadzone.
 - Publishes a `geometry_msgs/msg/TwistStamped` command.
 - Publishes state requests as `std_msgs/msg/String`.
 
@@ -82,7 +82,6 @@ Geometric states accepted by the manager:
 Behaviour states accepted by the manager:
 
 - `passthrough`: default behaviour.
-- `shared`: accepted by the state machine, but currently does not change the command in `CommandPipeline::update()`.
 - `homing` or `go_home`: generate an autonomous Cartesian command that drives configured joints toward the configured home positions.
 
 Startup defaults:
@@ -124,7 +123,7 @@ Hardware:
 ros2 launch cartesian_command_manager explorer.launch.py use_simulation:=false
 ```
 
-For first tests, use simulation, conservative velocity limits, and an external stop path. The joystick mapper limits are configured in `bringup/config/explorer_params.yaml` with `max_linear`, `max_angular`, and `deadzone`.
+For first tests, use simulation, conservative velocity limits, and an external stop path. The final velocity limits are applied by `qontrol_controller`; joystick deadzone is configured under `joystick_command_mapper.ros__parameters.deadzone`.
 
 The joystick homing button is configured with `homing_button_index`. It is disabled by default with `-1`; assign a real button index only after the homing joint target has been checked in simulation.
 
@@ -147,7 +146,6 @@ ros2 topic pub --once /geometric_state std_msgs/msg/String "{data: both}"
 Change behaviour state:
 
 ```bash
-ros2 topic pub --once /behaviour_state std_msgs/msg/String "{data: shared}"
 ros2 topic pub --once /behaviour_state std_msgs/msg/String "{data: go_home}"
 ros2 topic pub --once /behaviour_state std_msgs/msg/String "{data: passthrough}"
 ```
