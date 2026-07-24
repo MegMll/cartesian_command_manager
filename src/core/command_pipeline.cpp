@@ -68,7 +68,6 @@ namespace manager_core
     switch (state_machine_.behaviour_state())
     {
     case BehaviourState::PASSTHROUGH:
-    case BehaviourState::SHARED:
       return input_manager_.getFullCommand(now_sec);
     case BehaviourState::HOMING:
       return homing_behaviour_.update(context);

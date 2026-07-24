@@ -19,6 +19,7 @@ namespace manager_core
   {
     Eigen::Vector3d linear = Eigen::Vector3d::Zero();
     Eigen::Vector3d angular = Eigen::Vector3d::Zero();
+    std::string frame_id;
   };
 
   struct TimedCartesianCommand
@@ -39,7 +40,6 @@ namespace manager_core
   enum class BehaviourState
   {
     PASSTHROUGH,
-    SHARED,
     HOMING
   };
 
@@ -56,12 +56,14 @@ namespace manager_core
   {
     Eigen::Vector3d position = Eigen::Vector3d::Zero();
     Eigen::Quaterniond orientation = Eigen::Quaterniond::Identity();
+    std::string frame_id;
   };
 
   struct CartesianVelocity
   {
     Eigen::Vector3d linear = Eigen::Vector3d::Zero();
     Eigen::Vector3d angular = Eigen::Vector3d::Zero();
+    std::string frame_id;
   };
 
   struct RobotContext

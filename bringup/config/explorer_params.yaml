@@ -45,6 +45,9 @@ qontrol_explorer:
 cartesian_command_manager:
   ros__parameters:
     update_rate_hz: 100.0
+    output_frame_id: "base_link"
+    default_input_frame_id: "base_link"
+    tip_frame_id: "tool0"
 
     topics:
       joystick_command: "/joystick_cartesian_command"
@@ -84,13 +87,10 @@ joystick_command_mapper:
     output_topic: "/joystick_cartesian_command"
     geometric_state_topic: "/geometric_state"
     behaviour_state_topic: "/behaviour_state"
-    output_frame_id: ""
+    output_frame_id: "base_link"
     deadzone: 0.2
-    max_linear: 0.5
-    max_angular: 0.4
     rotation_button_index: 2
     translation_button_index: 1
     jaco_button_index: 11
     snake_button_index: 10
-    shared_button_index: -1
     homing_button_index: 4

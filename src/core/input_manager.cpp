@@ -137,6 +137,15 @@ namespace manager_core
         continue;
       }
 
+      if (command.frame_id.empty())
+      {
+        command.frame_id = channel.latest.command.frame_id;
+      }
+      else if (command.frame_id != channel.latest.command.frame_id)
+      {
+        continue;
+      }
+
       command.linear += channel.weight * channel.latest.command.linear;
       command.angular += channel.weight * channel.latest.command.angular;
       total_weight += channel.weight;

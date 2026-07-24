@@ -3,6 +3,18 @@ cartesian_command_manager:
     type: double
     default_value: 100.0
     description: "Command manager update loop frequency in Hz."
+  output_frame_id:
+    type: string
+    default_value: "base_link"
+    description: "Frame id used on the published Cartesian command."
+  default_input_frame_id:
+    type: string
+    default_value: "base_link"
+    description: "Frame assumed for input commands whose TwistStamped header.frame_id is empty."
+  tip_frame_id:
+    type: string
+    default_value: "tool0"
+    description: "End-effector frame accepted for input command frame transforms."
 
   topics:
     joystick_command:

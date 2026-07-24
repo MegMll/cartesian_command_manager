@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "rclcpp/rclcpp.hpp"
@@ -37,6 +38,8 @@ namespace cartesian_command_manager
 
     void updateVelocity();
     void publishBehaviourState(const std::string &state);
+    std::optional<manager_core::CartesianCommand> transformCommandToOutputFrame(
+        manager_core::CartesianCommand command, const std::string &source_name);
 
     manager_core::CommandPipeline pipeline_;
     manager_core::RobotContext robot_context_;
@@ -57,6 +60,9 @@ namespace cartesian_command_manager
     std::string ee_vel_topic_;
     std::string ee_jac_topic_;
     std::string joint_states_topic_;
+    std::string output_frame_id_;
+    std::string tip_frame_id_;
+    std::string default_input_frame_id_;
 
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr joystick_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr geometric_state_sub_;

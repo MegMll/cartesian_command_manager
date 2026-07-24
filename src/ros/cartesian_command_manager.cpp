@@ -56,10 +56,6 @@ namespace cartesian_command_manager
       {
         return manager_core::BehaviourState::PASSTHROUGH;
       }
-      if (normalized == "shared")
-      {
-        return manager_core::BehaviourState::SHARED;
-      }
       if (normalized == "homing" || normalized == "go_home")
       {
         return manager_core::BehaviourState::HOMING;
@@ -69,14 +65,15 @@ namespace cartesian_command_manager
     }
 
     void fillTwistMessage(const manager_core::CartesianCommand &command,
-                          geometry_msgs::msg::Twist &twist)
+                          geometry_msgs::msg::TwistStamped &msg)
     {
-      twist.linear.x = command.linear.x();
-      twist.linear.y = command.linear.y();
-      twist.linear.z = command.linear.z();
-      twist.angular.x = command.angular.x();
-      twist.angular.y = command.angular.y();
-      twist.angular.z = command.angular.z();
+      msg.header.frame_id = command.frame_id;
+      msg.twist.linear.x = command.linear.x();
+      msg.twist.linear.y = command.linear.y();
+      msg.twist.linear.z = command.linear.z();
+      msg.twist.angular.x = command.angular.x();
+      msg.twist.angular.y = command.angular.y();
+      msg.twist.angular.z = command.angular.z();
     }
 
   } // namespace
@@ -117,6 +114,9 @@ namespace cartesian_command_manager
     ee_jac_topic_ = params_.topics.ee_jac;
     joint_states_topic_ = params_.topics.joint_states;
     output_command_topic_ = params_.topics.output_command;
+    output_frame_id_ = params_.output_frame_id;
+    tip_frame_id_ = params_.tip_frame_id;
+    default_input_frame_id_ = params_.default_input_frame_id;
 
     manager_core::CommandPipelineConfig pipeline_config;
     pipeline_config.snake.gain = params_.shapers.snake.gain;
@@ -189,7 +189,15 @@ namespace cartesian_command_manager
     manager_core::CartesianCommand command;
     command.linear = {msg->twist.linear.x, msg->twist.linear.y, msg->twist.linear.z};
     command.angular = {msg->twist.angular.x, msg->twist.angular.y, msg->twist.angular.z};
-    pipeline_.setInputCommand(manager_core::InputSource::JOYSTICK, command, now().seconds());
+    command.frame_id = msg->header.frame_id;
+
+    const auto transformed = transformCommandToOutputFrame(command, "joystick");
+    if (!transformed)
+    {
+      return;
+    }
+
+    pipeline_.setInputCommand(manager_core::InputSource::JOYSTICK, *transformed, now().seconds());
   }
 
   void CartesianCommandManager::geometricStateCallback(const std_msgs::msg::String::SharedPtr msg)
@@ -242,6 +250,7 @@ namespace cartesian_command_manager
   {
     robot_context_.ee_pose.position = {msg->pose.position.x, msg->pose.position.y,
                                        msg->pose.position.z};
+    robot_context_.ee_pose.frame_id = msg->header.frame_id;
     robot_context_.ee_pose.orientation =
         Eigen::Quaterniond(msg->pose.orientation.w, msg->pose.orientation.x,
                            msg->pose.orientation.y, msg->pose.orientation.z);
@@ -258,6 +267,7 @@ namespace cartesian_command_manager
 
   void CartesianCommandManager::eeVelCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg)
   {
+    robot_context_.ee_vel.frame_id = msg->header.frame_id;
     robot_context_.ee_vel.linear = {msg->twist.linear.x, msg->twist.linear.y, msg->twist.linear.z};
     robot_context_.ee_vel.angular = {msg->twist.angular.x, msg->twist.angular.y,
                                      msg->twist.angular.z};
@@ -366,8 +376,26 @@ namespace cartesian_command_manager
     const auto command = pipeline_.update(now().seconds(), 1.0 / update_rate_hz_, robot_context_);
     geometry_msgs::msg::TwistStamped msg;
     msg.header.stamp = now();
+    msg.header.frame_id = output_frame_id_;
     if (command)
-      fillTwistMessage(*command, msg.twist);
+    {
+      auto output = *command;
+      if (output.frame_id.empty())
+      {
+        output.frame_id = output_frame_id_;
+      }
+      else if (output.frame_id != output_frame_id_)
+      {
+        const auto transformed = transformCommandToOutputFrame(output, "pipeline output");
+        if (!transformed)
+        {
+          cmd_pub_->publish(msg);
+          return;
+        }
+        output = *transformed;
+      }
+      fillTwistMessage(output, msg);
+    }
 
     cmd_pub_->publish(msg);
 
@@ -385,5 +413,55 @@ namespace cartesian_command_manager
     std_msgs::msg::String msg;
     msg.data = state;
     behaviour_state_pub_->publish(msg);
+  }
+
+  std::optional<manager_core::CartesianCommand>
+  CartesianCommandManager::transformCommandToOutputFrame(manager_core::CartesianCommand command,
+                                                        const std::string &source_name)
+  {
+    if (command.frame_id.empty())
+    {
+      command.frame_id = default_input_frame_id_;
+    }
+
+    if (output_frame_id_.empty() || command.frame_id == output_frame_id_)
+    {
+      command.frame_id = output_frame_id_;
+      return command;
+    }
+
+    if (robot_context_.ee_pose.frame_id.empty())
+    {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                           "Cannot transform %s command from '%s' to '%s': no end-effector pose "
+                           "frame is available yet",
+                           source_name.c_str(), command.frame_id.c_str(),
+                           output_frame_id_.c_str());
+      return std::nullopt;
+    }
+
+    const Eigen::Matrix3d output_R_tip = robot_context_.ee_pose.orientation.toRotationMatrix();
+    if (command.frame_id == tip_frame_id_ && output_frame_id_ == robot_context_.ee_pose.frame_id)
+    {
+      command.linear = output_R_tip * command.linear;
+      command.angular = output_R_tip * command.angular;
+      command.frame_id = output_frame_id_;
+      return command;
+    }
+
+    if (command.frame_id == robot_context_.ee_pose.frame_id && output_frame_id_ == tip_frame_id_)
+    {
+      command.linear = output_R_tip.transpose() * command.linear;
+      command.angular = output_R_tip.transpose() * command.angular;
+      command.frame_id = output_frame_id_;
+      return command;
+    }
+
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                         "Cannot transform %s command from '%s' to '%s': supported frames are "
+                         "'%s' and '%s'",
+                         source_name.c_str(), command.frame_id.c_str(), output_frame_id_.c_str(),
+                         robot_context_.ee_pose.frame_id.c_str(), tip_frame_id_.c_str());
+    return std::nullopt;
   }
 } // namespace cartesian_command_manager
