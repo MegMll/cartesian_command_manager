@@ -1,4 +1,4 @@
-#include "cartesian_command_manager/core/behaviours/homing.hpp"
+#include "cartesian_command_manager/core/shapers/behaviour/homing.hpp"
 
 #include <algorithm>
 #include <cmath>

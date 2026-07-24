@@ -5,8 +5,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "cartesian_command_manager/core/behaviours/homing.hpp"
 #include "cartesian_command_manager/core/input_manager.hpp"
+#include "cartesian_command_manager/core/shapers/behaviour/homing.hpp"
 #include "cartesian_command_manager/core/shapers/geometric/jaco.hpp"
 #include "cartesian_command_manager/core/shapers/geometric/snake.hpp"
 #include "cartesian_command_manager/core/shapers/shaper.hpp"

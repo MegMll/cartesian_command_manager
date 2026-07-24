@@ -20,9 +20,9 @@ generate_parameter_library(
 
 add_library(${PROJECT_NAME}_core
   src/core/command_pipeline.cpp
-  src/core/behaviours/homing.cpp
   src/core/input_manager.cpp
   src/core/state_machine.cpp
+  src/core/shapers/behaviour/homing.cpp
   src/core/shapers/geometric/jaco.cpp
   src/core/shapers/geometric/snake.cpp
 )
