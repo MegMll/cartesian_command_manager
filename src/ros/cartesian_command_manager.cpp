@@ -1,30 +1,19 @@
 #include "cartesian_command_manager/ros/cartesian_command_manager.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <chrono>
-#include <cstddef>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
-#include <vector>
 
 namespace cartesian_command_manager
 {
   namespace
   {
-    std::string normalizeStateName(std::string state)
-    {
-      std::transform(state.begin(), state.end(), state.begin(),
-                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-      std::replace(state.begin(), state.end(), '-', '_');
-      return state;
-    }
-
     std::optional<manager_core::GeometricState> parseGeometricState(const std::string &state)
     {
-      const auto normalized = normalizeStateName(state);
+      const auto normalized = normalizeParameterName(state);
 
       if (normalized == "both")
       {
@@ -50,7 +39,7 @@ namespace cartesian_command_manager
 
     std::optional<BehaviourRequest> parseBehaviourState(const std::string &state)
     {
-      const auto normalized = normalizeStateName(state);
+      const auto normalized = normalizeParameterName(state);
 
       if (normalized == "passthrough")
       {
@@ -80,37 +69,6 @@ namespace cartesian_command_manager
       msg.twist.angular.z = command.angular.z();
     }
 
-    std::vector<manager_core::JointTarget> buildJointTargets(
-        const std::vector<std::string> &target_names, const std::vector<double> &positions,
-        std::size_t joint_count)
-    {
-      std::vector<manager_core::JointTarget> targets;
-      targets.reserve(target_names.size());
-
-      if (joint_count == 0)
-      {
-        return targets;
-      }
-
-      for (std::size_t target_index = 0; target_index < target_names.size(); ++target_index)
-      {
-        const auto first_position = target_index * joint_count;
-        if (first_position + joint_count > positions.size())
-        {
-          break;
-        }
-
-        manager_core::JointTarget target;
-        target.name = normalizeStateName(target_names[target_index]);
-        target.positions.assign(positions.begin() + static_cast<std::ptrdiff_t>(first_position),
-                                positions.begin() +
-                                    static_cast<std::ptrdiff_t>(first_position + joint_count));
-        targets.push_back(std::move(target));
-      }
-
-      return targets;
-    }
-
   } // namespace
 
   CartesianCommandManager::CartesianCommandManager(const rclcpp::NodeOptions &options)
@@ -132,79 +90,42 @@ namespace cartesian_command_manager
 
   void CartesianCommandManager::readParameters()
   {
-    params_ = param_listener_->get_params();
-
-    update_rate_hz_ = params_.update_rate_hz;
-    if (update_rate_hz_ <= 0.0)
+    const auto params = param_listener_->get_params();
+    const auto parse_result = parseManagerConfig(params);
+    for (const auto &warning : parse_result.warnings)
     {
-      RCLCPP_WARN(get_logger(), "Invalid update_rate_hz %.3f, using 100.0 Hz", update_rate_hz_);
-      update_rate_hz_ = 100.0;
+      RCLCPP_WARN(get_logger(), "Parameter warning: %s", warning.c_str());
+    }
+    for (const auto &error : parse_result.errors)
+    {
+      RCLCPP_ERROR(get_logger(), "Parameter error: %s", error.c_str());
+    }
+    if (!parse_result.valid())
+    {
+      throw std::runtime_error("Invalid cartesian_command_manager parameters");
     }
 
-    joystick_command_topic_ = params_.topics.joystick_command;
-    geometric_state_topic_ = params_.topics.geometric_state;
-    behaviour_state_topic_ = params_.topics.behaviour_state;
-    ee_pose_topic_ = params_.topics.ee_pose;
-    ee_vel_topic_ = params_.topics.ee_vel;
-    ee_jac_topic_ = params_.topics.ee_jac;
-    joint_states_topic_ = params_.topics.joint_states;
-    output_command_topic_ = params_.topics.output_command;
-    output_frame_id_ = params_.output_frame_id;
-    tip_frame_id_ = params_.tip_frame_id;
-    default_input_frame_id_ = params_.default_input_frame_id;
+    config_ = parse_result.config;
+    update_rate_hz_ = config_.update_rate_hz;
+    joystick_command_topic_ = config_.topics.joystick_command;
+    geometric_state_topic_ = config_.topics.geometric_state;
+    behaviour_state_topic_ = config_.topics.behaviour_state;
+    ee_pose_topic_ = config_.topics.ee_pose;
+    ee_vel_topic_ = config_.topics.ee_vel;
+    ee_jac_topic_ = config_.topics.ee_jac;
+    joint_states_topic_ = config_.topics.joint_states;
+    output_command_topic_ = config_.topics.output_command;
+    output_frame_id_ = config_.frames.output_frame_id;
+    tip_frame_id_ = config_.frames.tip_frame_id;
+    default_input_frame_id_ = config_.frames.default_input_frame_id;
 
-    manager_core::CommandPipelineConfig pipeline_config;
-    pipeline_config.jaco.min_radius = params_.shapers.jaco.min_radius;
-    pipeline_config.jaco.max_angular_velocity = params_.shapers.jaco.max_angular_velocity;
-    pipeline_config.snake.gain = params_.shapers.snake.gain;
-    pipeline_config.joint_targets.joint_names = params_.behaviours.joint_targets.joint_names;
-    pipeline_config.joint_targets.targets =
-        buildJointTargets(params_.behaviours.joint_targets.target_names,
-                          params_.behaviours.joint_targets.positions,
-                          pipeline_config.joint_targets.joint_names.size());
-    pipeline_config.joint_targets.gain = params_.behaviours.joint_targets.gain;
-    pipeline_config.joint_targets.max_joint_velocity =
-        params_.behaviours.joint_targets.max_joint_velocity;
-    pipeline_config.joint_targets.max_linear_velocity =
-        params_.behaviours.joint_targets.max_linear_velocity;
-    pipeline_config.joint_targets.max_angular_velocity =
-        params_.behaviours.joint_targets.max_angular_velocity;
-    pipeline_config.joint_targets.position_tolerance =
-        params_.behaviours.joint_targets.position_tolerance;
-
-    if (pipeline_config.joint_targets.joint_names.empty() ||
-        pipeline_config.joint_targets.joint_names.front().empty())
-    {
-      RCLCPP_WARN(get_logger(),
-                  "Joint-target behaviour has no configured joints; target requests will be "
-                  "rejected");
-    }
-    else if (pipeline_config.joint_targets.targets.size() !=
-             params_.behaviours.joint_targets.target_names.size())
-    {
-      RCLCPP_WARN(get_logger(),
-                  "Joint-target behaviour has %zu target names but only %zu complete target "
-                  "position blocks",
-                  params_.behaviours.joint_targets.target_names.size(),
-                  pipeline_config.joint_targets.targets.size());
-    }
-    else if (params_.behaviours.joint_targets.positions.size() !=
-             params_.behaviours.joint_targets.target_names.size() *
-                 pipeline_config.joint_targets.joint_names.size())
-    {
-      RCLCPP_WARN(get_logger(),
-                  "Joint-target behaviour has %zu positions for %zu targets and %zu joints; extra "
-                  "positions will be ignored",
-                  params_.behaviours.joint_targets.positions.size(),
-                  params_.behaviours.joint_targets.target_names.size(),
-                  pipeline_config.joint_targets.joint_names.size());
-    }
-
-    pipeline_.configure(pipeline_config);
+    pipeline_.configure(config_.pipeline);
     pipeline_.setBehaviourState(current_behaviour_state_);
     pipeline_.setGeometricState(current_geometric_state_);
-    pipeline_.addInputChannel(manager_core::InputSource::JOYSTICK,
-                              params_.inputs.joystick.timeout_sec, params_.inputs.joystick.enabled);
+    for (const auto &input : config_.inputs)
+    {
+      pipeline_.addInputChannel(input.source, input.timeout_sec, input.enabled);
+    }
   }
 
   void CartesianCommandManager::setupSubscribers()
@@ -440,8 +361,9 @@ namespace cartesian_command_manager
       }
     }
 
-    const bool target_reached = current_behaviour_state_ == manager_core::BehaviourState::JOINT_TARGET &&
-                                pipeline_.isJointTargetReached(robot_context_);
+    const bool target_reached =
+        current_behaviour_state_ == manager_core::BehaviourState::JOINT_TARGET &&
+        pipeline_.isJointTargetReached(robot_context_);
 
     const auto command = pipeline_.update(now().seconds(), 1.0 / update_rate_hz_, robot_context_);
     geometry_msgs::msg::TwistStamped msg;
@@ -485,9 +407,9 @@ namespace cartesian_command_manager
     behaviour_state_pub_->publish(msg);
   }
 
-  std::optional<manager_core::CartesianCommand>
-  CartesianCommandManager::transformCommandToOutputFrame(manager_core::CartesianCommand command,
-                                                        const std::string &source_name)
+  std::optional<manager_core::CartesianCommand> CartesianCommandManager::
+      transformCommandToOutputFrame(manager_core::CartesianCommand command,
+                                    const std::string &source_name)
   {
     if (command.frame_id.empty())
     {
@@ -505,8 +427,7 @@ namespace cartesian_command_manager
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
                            "Cannot transform %s command from '%s' to '%s': no end-effector pose "
                            "frame is available yet",
-                           source_name.c_str(), command.frame_id.c_str(),
-                           output_frame_id_.c_str());
+                           source_name.c_str(), command.frame_id.c_str(), output_frame_id_.c_str());
       return std::nullopt;
     }
 

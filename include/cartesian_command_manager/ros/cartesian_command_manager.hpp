@@ -15,6 +15,7 @@
 
 #include "cartesian_command_manager/cartesian_command_manager_parameters.hpp"
 #include "cartesian_command_manager/core/command_pipeline.hpp"
+#include "cartesian_command_manager/ros/parameter_parsing.hpp"
 
 namespace cartesian_command_manager
 {
@@ -48,7 +49,7 @@ namespace cartesian_command_manager
         manager_core::BehaviourState::PASSTHROUGH};
 
     std::shared_ptr<cartesian_command_manager::ParamListener> param_listener_;
-    cartesian_command_manager::Params params_;
+    ManagerConfig config_;
 
     double update_rate_hz_{100.0};
 

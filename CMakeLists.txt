@@ -37,6 +37,7 @@ ament_target_dependencies(${PROJECT_NAME}_core
 
 add_library(${PROJECT_NAME}_ros
   src/ros/cartesian_command_manager.cpp
+  src/ros/parameter_parsing.cpp
 )
 target_compile_features(${PROJECT_NAME}_ros PUBLIC cxx_std_17)
 target_link_libraries(${PROJECT_NAME}_ros
