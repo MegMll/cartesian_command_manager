@@ -2,7 +2,7 @@
 
 `cartesian_command_manager` combines Cartesian velocity inputs, applies the selected command shaping state, and publishes a single `geometry_msgs/msg/TwistStamped` command for the Cartesian velocity controller.
 
-The joystick-specific mapping is intentionally kept outside this package in `joystick_command_mapper`. The manager treats joystick commands like any other input: a timestamped Cartesian twist.
+The joystick-specific mapping is intentionally kept outside this package in `joystick_mapper`. The manager treats joystick commands like any other input: a timestamped Cartesian twist.
 
 ## Runtime Graph
 
@@ -10,7 +10,7 @@ Typical explorer setup:
 
 ```text
 /joy
-  -> joystick_command_mapper
+  -> joystick_mapper
   -> /joystick_cartesian_command
   -> cartesian_command_manager
   -> /cartesian_command
@@ -47,7 +47,7 @@ The manager also subscribes to robot context topics used by geometric shapers:
 
 Current implementation note: the joystick input is wired end to end. `VISUAL_SERVOING` and its parameters exist as the next input source, but the ROS subscription and callback are not implemented yet.
 
-`joystick_command_mapper`:
+`joystick_mapper`:
 
 - Subscribes to `sensor_msgs/msg/Joy`.
 - Applies joystick deadzone.
@@ -56,7 +56,9 @@ Current implementation note: the joystick input is wired end to end. `VISUAL_SER
 
 ## Current Topics
 
-Configured in `bringup/config/explorer_params.yaml`:
+Manager topics are configured in `bringup/config/explorer_params.yaml`.
+Joystick mapper topics must match them and are configured in
+`joystick_mapper/config/joystick_3d.yaml`.
 
 | Topic | Type | Direction | Purpose |
 | --- | --- | --- | --- |
@@ -66,44 +68,70 @@ Configured in `bringup/config/explorer_params.yaml`:
 | `/ee_pose` | `geometry_msgs/msg/PoseStamped` | input | Current end-effector pose |
 | `/ee_velocity` | `geometry_msgs/msg/TwistStamped` | input | Current end-effector velocity |
 | `/ee_jac` | `std_msgs/msg/Float64MultiArray` | input | Current end-effector Jacobian |
-| `/joint_states` | `sensor_msgs/msg/JointState` | input | Current joint positions for homing |
+| `/joint_states` | `sensor_msgs/msg/JointState` | input | Current joint positions for joint-target behaviours |
 | `/cartesian_command` | `geometry_msgs/msg/TwistStamped` | output | Final command sent to the velocity controller |
 
 ## States
 
 Geometric states accepted by the manager:
 
-- `both`: keep linear and angular velocity.
-- `translation`: zero angular velocity.
-- `rotation`: zero linear velocity.
+- `both`: no geometric shaper.
 - `jaco`: apply the Jaco geometric shaper.
 - `snake`: apply the Snake geometric shaper.
 
-Behaviour states accepted by the manager:
+The Jaco shaper disables its generated angular velocity inside
+`shapers.jaco.min_radius` and clamps generated `angular.z` to
+`shapers.jaco.max_angular_velocity`.
+
+Joystick-local axis layouts, such as B1/B2 mappings, are handled by
+`joystick_mapper` before the command reaches this manager.
+
+Behaviour requests accepted by the manager:
 
 - `passthrough`: default behaviour.
-- `homing` or `go_home`: generate an autonomous Cartesian command that drives configured joints toward the configured home positions.
+- `homing` or `go_home`: drive configured joints toward the `home` joint target.
+- `go_<target>`: drive configured joints toward another configured joint target.
 
 Startup defaults:
 
 - Geometric state: `both`
 - Behaviour state: `passthrough`
 
-Homing configuration is under `behaviours.homing` in `bringup/config/explorer_params.yaml`. The configured joint order must match the Jacobian column order.
+Joint target configuration is under `behaviours.joint_targets` in
+`bringup/config/explorer_params.yaml`. The configured joint order must match the
+Jacobian column order. Add targets by appending to `target_names` and appending
+one full joint-position block to `positions`.
 
-When homing reaches `position_tolerance`, the manager publishes one zero command and automatically switches behaviour back to `passthrough`.
+Example with two six-joint targets:
 
-Repeated state requests currently behave like toggles:
+```yaml
+behaviours:
+  joint_targets:
+    joint_names: ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
+    target_names: ["home", "ready"]
+    positions: [
+      2.5, 0.3, -2.4, 2.97, 1.2, -0.5,
+      0.0, 0.4, -1.8, 2.2, 1.0, 0.0
+    ]
+```
 
-- Requesting the active geometric state returns to `both`.
-- Requesting the active behaviour state returns to `passthrough`.
+The manager accepts joint-target requests only when the target config, joint
+state, and Jacobian are valid. If context becomes invalid while a target is
+active, the manager aborts the behaviour and publishes `passthrough` so the
+joystick mapper stays synchronized.
+
+When a joint target reaches `position_tolerance`, the manager publishes one zero command and automatically switches behaviour back to `passthrough`.
+
+State requests are direct set commands. Publishing `jaco` selects `jaco`,
+publishing `snake` selects `snake`, publishing `both` clears the geometric
+shaper, and publishing `passthrough` clears the active joint-target behaviour.
 
 ## Build
 
 From the ROS 2 workspace root:
 
 ```bash
-colcon build --packages-select joystick_command_mapper cartesian_command_manager
+colcon build --packages-select joystick_mapper cartesian_command_manager
 source install/setup.bash
 ```
 
@@ -123,9 +151,16 @@ Hardware:
 ros2 launch cartesian_command_manager explorer.launch.py use_simulation:=false
 ```
 
-For first tests, use simulation, conservative velocity limits, and an external stop path. The final velocity limits are applied by `qontrol_controller`; joystick deadzone is configured under `joystick_command_mapper.ros__parameters.deadzone`.
+Use a specific joystick mapper config:
 
-The joystick homing button is configured with `homing_button_index`. It is disabled by default with `-1`; assign a real button index only after the homing joint target has been checked in simulation.
+```bash
+ros2 launch cartesian_command_manager explorer.launch.py \
+  joystick_config_file:=$(ros2 pkg prefix joystick_mapper)/share/joystick_mapper/config/joystick_3d.yaml
+```
+
+For first tests, use simulation, conservative velocity limits, and an external stop path. The final velocity limits are applied by `qontrol_controller`; joystick deadzone is configured in `joystick_mapper/config/joystick_3d.yaml`.
+
+The joystick homing button is configured with `homing_button_index` in the joystick mapper config. Assign a real button index only after the homing joint target has been checked in simulation.
 
 ## Manual Checks
 
@@ -138,9 +173,9 @@ ros2 topic pub /joystick_cartesian_command geometry_msgs/msg/TwistStamped "{twis
 Change geometric state:
 
 ```bash
-ros2 topic pub --once /geometric_state std_msgs/msg/String "{data: translation}"
-ros2 topic pub --once /geometric_state std_msgs/msg/String "{data: rotation}"
 ros2 topic pub --once /geometric_state std_msgs/msg/String "{data: both}"
+ros2 topic pub --once /geometric_state std_msgs/msg/String "{data: jaco}"
+ros2 topic pub --once /geometric_state std_msgs/msg/String "{data: snake}"
 ```
 
 Change behaviour state:

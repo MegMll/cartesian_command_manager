@@ -14,7 +14,7 @@ The main design rule is simple: every command source should publish a `geometry_
 - Input command frame normalization.
 - Final `TwistStamped` output.
 
-`joystick_command_mapper` owns:
+`joystick_mapper` owns:
 
 - `sensor_msgs/msg/Joy` parsing.
 - Axis mapping.
@@ -189,11 +189,16 @@ ros2 topic echo /cartesian_command
 
 Use a behaviour state for policy-level command handling, for example choosing how to arbitrate between human input and an autonomous input.
 
+If you only need another joint-space go-to pose, do not add a new behaviour
+state. Add a target under `behaviours.joint_targets.target_names`, append one
+full joint-position block to `behaviours.joint_targets.positions`, and request
+it with `go_<target>`.
+
 Important: adding the enum and parser only makes the state selectable. You must also implement what the behaviour does in the pipeline.
 
-The current strategy is behaviour first, then geometric shaping only for behaviours where that is meaningful. `PASSTHROUGH` and `SHARED` use geometric shaping. `HOMING` bypasses geometric shaping because it generates an autonomous command and should not be accidentally broken by `rotation`, `translation`, `snake`, or another user-selected geometric mode.
+The current strategy is behaviour first, then geometric shaping only for behaviours where that is meaningful. `PASSTHROUGH` and `SHARED` use geometric shaping. `JOINT_TARGET` bypasses geometric shaping because it generates an autonomous command and should not be accidentally affected by `jaco`, `snake`, or another user-selected geometric mode.
 
-`HOMING` also owns its completion transition: when the configured joint error is inside tolerance, the manager switches back to `PASSTHROUGH` and republishes `passthrough` on the behaviour topic so the joystick mapper stays synchronized.
+`JOINT_TARGET` also owns its completion transition: when the configured joint error is inside tolerance, the manager switches back to `PASSTHROUGH` and republishes `passthrough` on the behaviour topic so the joystick mapper stays synchronized.
 
 ### 1. Add The Enum
 
@@ -204,7 +209,7 @@ enum class BehaviourState
 {
   PASSTHROUGH,
   SHARED,
-  HOMING,
+  JOINT_TARGET,
   MY_BEHAVIOUR
 };
 ```
@@ -222,29 +227,19 @@ if (normalized == "my_behaviour")
 
 State strings should be lowercase snake case. The manager normalizes case and converts `-` to `_`.
 
-### 3. Validate State Combinations
-
-Edit `src/core/state_machine.cpp` if some behaviour and geometric state combinations should be rejected:
-
-```cpp
-bool StateMachine::isCombinationAllowed(BehaviourState bState, GeometricState gState) const
-{
-  if (bState == BehaviourState::MY_BEHAVIOUR && gState == GeometricState::SNAKE)
-  {
-    return false;
-  }
-  return true;
-}
-```
-
-### 4. Implement The Behaviour
+### 3. Implement The Behaviour
 
 Edit `src/core/command_pipeline.cpp`.
 
 Read the active behaviour with:
 
 ```cpp
-const auto behaviour_state = state_machine_.behaviour_state();
+switch (behaviour_state_)
+{
+case BehaviourState::MY_BEHAVIOUR:
+  // ...
+  break;
+}
 ```
 
 Then apply the behaviour before or after geometric shaping, depending on the intended semantics.
@@ -255,18 +250,18 @@ Examples:
 - Final safety filters usually belong after geometric shaping.
 - Mode-specific blending may need both the behaviour state and the active input sources.
 
-### 5. Add Joystick Selection If Needed
+### 4. Add Joystick Selection If Needed
 
-Only update `joystick_command_mapper` if the new behaviour should be selectable from joystick buttons.
+Only update `joystick_mapper` if the new behaviour should be selectable from joystick buttons.
 
 Typical changes in the mapper package:
 
 - Add a parameter in its parameter YAML or declared parameters.
 - Add a button index member.
 - Call the existing behaviour-button handling with the new state string.
-- Add the button to the common launch config in `bringup/config/explorer_params.yaml`.
+- Add the button to `joystick_mapper/config/joystick_3d.yaml`.
 
-### 6. Test The Behaviour
+### 5. Test The Behaviour
 
 ```bash
 ros2 topic pub --once /behaviour_state std_msgs/msg/String "{data: my_behaviour}"
@@ -283,7 +278,9 @@ The manager should warn and keep its previous state.
 
 ## Add A New Geometric State
 
-Use a geometric state when the command shape changes, for example translation-only, rotation-only, or a Jacobian-based mapping.
+Use a geometric state when the manager needs to apply a robot-aware command shaper, for example a pose-based, Jacobian-based, or task-geometry-based mapping.
+
+Joystick-local axis layouts, such as B1/B2 control, belong in `joystick_mapper`. They should be expressed by changing which joystick axes are mapped into the incoming `TwistStamped`, not by adding manager states.
 
 ### 1. Add The Enum
 
@@ -292,8 +289,6 @@ Edit `include/cartesian_command_manager/core/types.hpp`:
 ```cpp
 enum class GeometricState
 {
-  ROTATION,
-  TRANSLATION,
   BOTH,
   JACO,
   SNAKE,
@@ -312,18 +307,9 @@ if (normalized == "my_geometric_state")
 }
 ```
 
-### 3. Decide Between Inline Logic And A Shaper
+### 3. Implement The Shaper
 
-Use inline logic in `CommandPipeline::update()` for simple filters:
-
-```cpp
-case GeometricState::MY_GEOMETRIC_STATE:
-  output.angular.setZero();
-  output.linear.z() = 0.0;
-  break;
-```
-
-Use a shaper class when the state needs memory, parameters, Jacobians, pose, or more than a few lines of logic.
+Use a shaper class when the state needs memory, parameters, Jacobians, pose, or robot context.
 
 ### 4. Add A Shaper Class
 
@@ -380,20 +366,21 @@ Follow the existing `snake.gain` path as the example.
 
 ### 7. Add Joystick Selection If Needed
 
-Only update `joystick_command_mapper` if the new geometric state should be selectable from joystick buttons.
+Only update `joystick_mapper` if the new geometric state should be selectable from joystick buttons.
 
 Typical mapper changes:
 
 - Add a button index parameter.
 - Add the button index member.
 - Call the existing geometric-button handling with the new lowercase state string.
+- Add the button to `joystick_mapper/config/joystick_3d.yaml`.
 - Subscribe to the same state topic so the mapper stays synchronized with external state changes.
 - Reject unknown incoming state strings.
 
 ### 8. Test The State
 
 ```bash
-colcon build --packages-select joystick_command_mapper cartesian_command_manager
+colcon build --packages-select joystick_mapper cartesian_command_manager
 source install/setup.bash
 ros2 topic pub --once /geometric_state std_msgs/msg/String "{data: my_geometric_state}"
 ros2 topic echo /cartesian_command
@@ -412,23 +399,20 @@ State topics use `std_msgs/msg/String`.
 Current accepted strings:
 
 ```text
-geometric: both, translation, rotation, jaco, snake
-behaviour: passthrough, homing, go_home
+geometric: both, jaco, snake
+behaviour: passthrough, homing, go_home, go_<target>
 ```
 
 The manager rejects unknown strings and keeps the previous state.
 
 The joystick mapper should do the same for incoming state strings. Do not store unknown state names, because that can desynchronize mapper state from manager state.
 
-Current toggle behaviour:
+State messages use direct set semantics. Publishing `jaco` selects `jaco`,
+publishing `snake` selects `snake`, publishing `both` clears the geometric
+shaper, and publishing `passthrough` clears the active joint-target behaviour.
 
-- Publishing the active geometric state again resets the manager to `both`.
-- Publishing the active behaviour state again resets the manager to `passthrough`.
-
-This is convenient for joystick buttons. If direct set semantics are needed later, change this in:
-
-- `CartesianCommandManager::geometricStateCallback()`
-- `CartesianCommandManager::behaviourStateCallback()`
+Joystick button toggling belongs in `joystick_mapper`; the mapper should
+publish the resulting state string.
 
 ## Review Checklist
 
