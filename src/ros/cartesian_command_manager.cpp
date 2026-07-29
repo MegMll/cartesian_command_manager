@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace cartesian_command_manager
 {
@@ -24,14 +26,6 @@ namespace cartesian_command_manager
     {
       const auto normalized = normalizeStateName(state);
 
-      if (normalized == "rotation")
-      {
-        return manager_core::GeometricState::ROTATION;
-      }
-      if (normalized == "translation")
-      {
-        return manager_core::GeometricState::TRANSLATION;
-      }
       if (normalized == "both")
       {
         return manager_core::GeometricState::BOTH;
@@ -48,17 +42,27 @@ namespace cartesian_command_manager
       return std::nullopt;
     }
 
-    std::optional<manager_core::BehaviourState> parseBehaviourState(const std::string &state)
+    struct BehaviourRequest
+    {
+      manager_core::BehaviourState state{manager_core::BehaviourState::PASSTHROUGH};
+      std::string joint_target_name;
+    };
+
+    std::optional<BehaviourRequest> parseBehaviourState(const std::string &state)
     {
       const auto normalized = normalizeStateName(state);
 
       if (normalized == "passthrough")
       {
-        return manager_core::BehaviourState::PASSTHROUGH;
+        return BehaviourRequest{manager_core::BehaviourState::PASSTHROUGH, ""};
       }
       if (normalized == "homing" || normalized == "go_home")
       {
-        return manager_core::BehaviourState::HOMING;
+        return BehaviourRequest{manager_core::BehaviourState::JOINT_TARGET, "home"};
+      }
+      if (normalized.rfind("go_", 0) == 0 && normalized.size() > 3)
+      {
+        return BehaviourRequest{manager_core::BehaviourState::JOINT_TARGET, normalized.substr(3)};
       }
 
       return std::nullopt;
@@ -74,6 +78,37 @@ namespace cartesian_command_manager
       msg.twist.angular.x = command.angular.x();
       msg.twist.angular.y = command.angular.y();
       msg.twist.angular.z = command.angular.z();
+    }
+
+    std::vector<manager_core::JointTarget> buildJointTargets(
+        const std::vector<std::string> &target_names, const std::vector<double> &positions,
+        std::size_t joint_count)
+    {
+      std::vector<manager_core::JointTarget> targets;
+      targets.reserve(target_names.size());
+
+      if (joint_count == 0)
+      {
+        return targets;
+      }
+
+      for (std::size_t target_index = 0; target_index < target_names.size(); ++target_index)
+      {
+        const auto first_position = target_index * joint_count;
+        if (first_position + joint_count > positions.size())
+        {
+          break;
+        }
+
+        manager_core::JointTarget target;
+        target.name = normalizeStateName(target_names[target_index]);
+        target.positions.assign(positions.begin() + static_cast<std::ptrdiff_t>(first_position),
+                                positions.begin() +
+                                    static_cast<std::ptrdiff_t>(first_position + joint_count));
+        targets.push_back(std::move(target));
+      }
+
+      return targets;
     }
 
   } // namespace
@@ -119,28 +154,50 @@ namespace cartesian_command_manager
     default_input_frame_id_ = params_.default_input_frame_id;
 
     manager_core::CommandPipelineConfig pipeline_config;
+    pipeline_config.jaco.min_radius = params_.shapers.jaco.min_radius;
+    pipeline_config.jaco.max_angular_velocity = params_.shapers.jaco.max_angular_velocity;
     pipeline_config.snake.gain = params_.shapers.snake.gain;
-    pipeline_config.homing.joint_names = params_.behaviours.homing.joint_names;
-    pipeline_config.homing.positions = params_.behaviours.homing.positions;
-    pipeline_config.homing.gain = params_.behaviours.homing.gain;
-    pipeline_config.homing.max_joint_velocity = params_.behaviours.homing.max_joint_velocity;
-    pipeline_config.homing.max_linear_velocity = params_.behaviours.homing.max_linear_velocity;
-    pipeline_config.homing.max_angular_velocity = params_.behaviours.homing.max_angular_velocity;
-    pipeline_config.homing.position_tolerance = params_.behaviours.homing.position_tolerance;
+    pipeline_config.joint_targets.joint_names = params_.behaviours.joint_targets.joint_names;
+    pipeline_config.joint_targets.targets =
+        buildJointTargets(params_.behaviours.joint_targets.target_names,
+                          params_.behaviours.joint_targets.positions,
+                          pipeline_config.joint_targets.joint_names.size());
+    pipeline_config.joint_targets.gain = params_.behaviours.joint_targets.gain;
+    pipeline_config.joint_targets.max_joint_velocity =
+        params_.behaviours.joint_targets.max_joint_velocity;
+    pipeline_config.joint_targets.max_linear_velocity =
+        params_.behaviours.joint_targets.max_linear_velocity;
+    pipeline_config.joint_targets.max_angular_velocity =
+        params_.behaviours.joint_targets.max_angular_velocity;
+    pipeline_config.joint_targets.position_tolerance =
+        params_.behaviours.joint_targets.position_tolerance;
 
-    if (pipeline_config.homing.joint_names.empty() ||
-        pipeline_config.homing.joint_names.front().empty())
+    if (pipeline_config.joint_targets.joint_names.empty() ||
+        pipeline_config.joint_targets.joint_names.front().empty())
     {
       RCLCPP_WARN(get_logger(),
-                  "Homing behaviour has no configured joints; GO_HOME will publish zero commands");
+                  "Joint-target behaviour has no configured joints; target requests will be "
+                  "rejected");
     }
-    else if (pipeline_config.homing.joint_names.size() != pipeline_config.homing.positions.size())
+    else if (pipeline_config.joint_targets.targets.size() !=
+             params_.behaviours.joint_targets.target_names.size())
     {
       RCLCPP_WARN(get_logger(),
-                  "Homing behaviour has %zu joint names but %zu positions; GO_HOME will publish "
-                  "zero commands",
-                  pipeline_config.homing.joint_names.size(),
-                  pipeline_config.homing.positions.size());
+                  "Joint-target behaviour has %zu target names but only %zu complete target "
+                  "position blocks",
+                  params_.behaviours.joint_targets.target_names.size(),
+                  pipeline_config.joint_targets.targets.size());
+    }
+    else if (params_.behaviours.joint_targets.positions.size() !=
+             params_.behaviours.joint_targets.target_names.size() *
+                 pipeline_config.joint_targets.joint_names.size())
+    {
+      RCLCPP_WARN(get_logger(),
+                  "Joint-target behaviour has %zu positions for %zu targets and %zu joints; extra "
+                  "positions will be ignored",
+                  params_.behaviours.joint_targets.positions.size(),
+                  params_.behaviours.joint_targets.target_names.size(),
+                  pipeline_config.joint_targets.joint_names.size());
     }
 
     pipeline_.configure(pipeline_config);
@@ -209,18 +266,8 @@ namespace cartesian_command_manager
       return;
     }
 
-    const auto requested_state = *geometric_state;
-    const auto next_state = requested_state == current_geometric_state_
-                                ? manager_core::GeometricState::BOTH
-                                : requested_state;
-
-    if (!pipeline_.setGeometricState(next_state))
-    {
-      RCLCPP_WARN(get_logger(), "Rejected geometric state '%s'", msg->data.c_str());
-      return;
-    }
-
-    current_geometric_state_ = next_state;
+    pipeline_.setGeometricState(*geometric_state);
+    current_geometric_state_ = *geometric_state;
   }
 
   void CartesianCommandManager::behaviourStateCallback(const std_msgs::msg::String::SharedPtr msg)
@@ -232,18 +279,29 @@ namespace cartesian_command_manager
       return;
     }
 
-    const auto requested_state = *behaviour_state;
-    const auto next_state = requested_state == current_behaviour_state_
-                                ? manager_core::BehaviourState::PASSTHROUGH
-                                : requested_state;
-
-    if (!pipeline_.setBehaviourState(next_state))
+    if (behaviour_state->state == manager_core::BehaviourState::JOINT_TARGET)
     {
-      RCLCPP_WARN(get_logger(), "Rejected behaviour state '%s'", msg->data.c_str());
-      return;
+      if (!pipeline_.setJointTarget(behaviour_state->joint_target_name))
+      {
+        RCLCPP_WARN(get_logger(), "Rejecting unknown joint target '%s'",
+                    behaviour_state->joint_target_name.c_str());
+        return;
+      }
+
+      const auto target_error = pipeline_.validateJointTarget(robot_context_);
+      if (target_error)
+      {
+        RCLCPP_WARN(get_logger(), "Rejecting joint-target request '%s': %s",
+                    behaviour_state->joint_target_name.c_str(), target_error->c_str());
+        pipeline_.setBehaviourState(manager_core::BehaviourState::PASSTHROUGH);
+        current_behaviour_state_ = manager_core::BehaviourState::PASSTHROUGH;
+        publishBehaviourState("passthrough");
+        return;
+      }
     }
 
-    current_behaviour_state_ = next_state;
+    pipeline_.setBehaviourState(behaviour_state->state);
+    current_behaviour_state_ = behaviour_state->state;
   }
 
   void CartesianCommandManager::eePoseCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
@@ -370,8 +428,20 @@ namespace cartesian_command_manager
 
   void CartesianCommandManager::updateVelocity()
   {
-    const bool homing_reached = current_behaviour_state_ == manager_core::BehaviourState::HOMING &&
-                                pipeline_.isHomingTargetReached(robot_context_);
+    if (current_behaviour_state_ == manager_core::BehaviourState::JOINT_TARGET)
+    {
+      const auto target_error = pipeline_.validateJointTarget(robot_context_);
+      if (target_error)
+      {
+        RCLCPP_WARN(get_logger(), "Aborting joint-target behaviour: %s", target_error->c_str());
+        pipeline_.setBehaviourState(manager_core::BehaviourState::PASSTHROUGH);
+        current_behaviour_state_ = manager_core::BehaviourState::PASSTHROUGH;
+        publishBehaviourState("passthrough");
+      }
+    }
+
+    const bool target_reached = current_behaviour_state_ == manager_core::BehaviourState::JOINT_TARGET &&
+                                pipeline_.isJointTargetReached(robot_context_);
 
     const auto command = pipeline_.update(now().seconds(), 1.0 / update_rate_hz_, robot_context_);
     geometry_msgs::msg::TwistStamped msg;
@@ -399,12 +469,12 @@ namespace cartesian_command_manager
 
     cmd_pub_->publish(msg);
 
-    if (homing_reached)
+    if (target_reached)
     {
       pipeline_.setBehaviourState(manager_core::BehaviourState::PASSTHROUGH);
       current_behaviour_state_ = manager_core::BehaviourState::PASSTHROUGH;
       publishBehaviourState("passthrough");
-      RCLCPP_INFO(get_logger(), "Homing target reached, switching behaviour to passthrough");
+      RCLCPP_INFO(get_logger(), "Joint target reached, switching behaviour to passthrough");
     }
   }
 

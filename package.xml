@@ -3,9 +3,9 @@
 <package format="3">
   <name>cartesian_command_manager</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="millan@isir.upmc.fr">megane</maintainer>
-  <license>TODO: License declaration</license>
+  <description>Combines Cartesian command inputs, applies command shaping states, and publishes a controller-ready TwistStamped command.</description>
+  <maintainer email="millan@isir.upmc.fr">Megane Millan</maintainer>
+  <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>generate_parameter_library</buildtool_depend>
@@ -18,7 +18,7 @@
   <depend>std_msgs</depend>
 
   <exec_depend>joy</exec_depend>
-  <exec_depend>joystick_command_mapper</exec_depend>
+  <exec_depend>joystick_mapper</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 

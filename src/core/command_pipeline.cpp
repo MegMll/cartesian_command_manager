@@ -6,10 +6,10 @@ namespace manager_core
   void CommandPipeline::configure(const CommandPipelineConfig &config)
   {
     geometric_shapers_.clear();
-    homing_behaviour_ = HomingBehaviour(config.homing);
 
-    registerGeometricShaper(GeometricState::JACO, std::make_unique<JacoShaper>());
+    registerGeometricShaper(GeometricState::JACO, std::make_unique<JacoShaper>(config.jaco));
     registerGeometricShaper(GeometricState::SNAKE, std::make_unique<SnakeShaper>(config.snake));
+    joint_target_behaviour_ = JointTargetBehaviour(config.joint_targets);
   }
 
   void CommandPipeline::addInputChannel(InputSource source, double timeout_sec, bool enabled)
@@ -27,14 +27,19 @@ namespace manager_core
     input_manager_.disableInputChannel(source);
   }
 
-  bool CommandPipeline::setBehaviourState(BehaviourState state)
+  void CommandPipeline::setBehaviourState(BehaviourState state)
   {
-    return state_machine_.setState(state);
+    behaviour_state_ = state;
   }
 
-  bool CommandPipeline::setGeometricState(GeometricState state)
+  void CommandPipeline::setGeometricState(GeometricState state)
   {
-    return state_machine_.setState(state);
+    geometric_state_ = state;
+  }
+
+  bool CommandPipeline::setJointTarget(const std::string &target_name)
+  {
+    return joint_target_behaviour_.setTarget(target_name);
   }
 
   void CommandPipeline::setInputCommand(InputSource source, const CartesianCommand &command,
@@ -53,7 +58,7 @@ namespace manager_core
     }
 
     CartesianCommand output = *command;
-    if (state_machine_.behaviour_state() == BehaviourState::HOMING)
+    if (behaviour_state_ == BehaviourState::JOINT_TARGET)
     {
       return output;
     }
@@ -65,12 +70,12 @@ namespace manager_core
   std::optional<CartesianCommand> CommandPipeline::applyBehaviour(double now_sec,
                                                                   const RobotContext &context) const
   {
-    switch (state_machine_.behaviour_state())
+    switch (behaviour_state_)
     {
     case BehaviourState::PASSTHROUGH:
       return input_manager_.getFullCommand(now_sec);
-    case BehaviourState::HOMING:
-      return homing_behaviour_.update(context);
+    case BehaviourState::JOINT_TARGET:
+      return joint_target_behaviour_.update(context);
     }
 
     return std::nullopt;
@@ -79,20 +84,12 @@ namespace manager_core
   void CommandPipeline::applyGeometricState(CartesianCommand &output, const RobotContext &context,
                                             double dt_sec)
   {
-    const auto geometric_state = state_machine_.geometric_state();
-
-    switch (geometric_state)
+    switch (geometric_state_)
     {
-    case GeometricState::TRANSLATION:
-      output.angular.setZero();
-      break;
-    case GeometricState::ROTATION:
-      output.linear.setZero();
-      break;
     case GeometricState::BOTH:
       break;
     default:
-      applyRegisteredGeometricShaper(geometric_state, output, context, dt_sec);
+      applyRegisteredGeometricShaper(geometric_state_, output, context, dt_sec);
       break;
     }
   }
@@ -102,9 +99,15 @@ namespace manager_core
     return input_manager_.getValidSources(now_sec);
   }
 
-  bool CommandPipeline::isHomingTargetReached(const RobotContext &context) const
+  bool CommandPipeline::isJointTargetReached(const RobotContext &context) const
   {
-    return homing_behaviour_.isTargetReached(context);
+    return joint_target_behaviour_.isComplete(context);
+  }
+
+  std::optional<std::string> CommandPipeline::validateJointTarget(
+      const RobotContext &context) const
+  {
+    return joint_target_behaviour_.validate(context);
   }
 
   void CommandPipeline::registerGeometricShaper(GeometricState state,

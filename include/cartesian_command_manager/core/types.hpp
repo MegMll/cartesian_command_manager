@@ -40,13 +40,11 @@ namespace manager_core
   enum class BehaviourState
   {
     PASSTHROUGH,
-    HOMING
+    JOINT_TARGET
   };
 
   enum class GeometricState
   {
-    ROTATION,
-    TRANSLATION,
     BOTH,
     JACO,
     SNAKE,
