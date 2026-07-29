@@ -68,29 +68,19 @@ cartesian_command_manager:
         enabled: true
 
     shapers:
+      jaco:
+        min_radius: 0.05
+        max_angular_velocity: 0.4
       snake:
         gain: 3.0
 
     behaviours:
-      homing:
+      joint_targets:
         joint_names: ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
+        target_names: ["home"]
         positions: [2.5, 0.3, -2.4, 2.97, 1.2, -0.5]
         gain: 1.0
         max_joint_velocity: 0.2
         max_linear_velocity: 0.14
         max_angular_velocity: 0.4
         position_tolerance: 0.05
-
-joystick_command_mapper:
-  ros__parameters:
-    joy_topic: "/joy"
-    output_topic: "/joystick_cartesian_command"
-    geometric_state_topic: "/geometric_state"
-    behaviour_state_topic: "/behaviour_state"
-    output_frame_id: "base_link"
-    deadzone: 0.2
-    rotation_button_index: 2
-    translation_button_index: 1
-    jaco_button_index: 11
-    snake_button_index: 10
-    homing_button_index: 4

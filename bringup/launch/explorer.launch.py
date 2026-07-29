@@ -1,6 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument,IncludeLaunchDescription, RegisterEventHandler, TimerAction
-from launch.event_handlers import OnProcessExit
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
 from launch.substitutions import PathJoinSubstitution, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -15,27 +14,37 @@ def generate_launch_description():
     # --------------------------------------------------------------------------
     gui = LaunchConfiguration("gui")
     use_simulation = LaunchConfiguration("use_simulation")
+    joystick_config_file = LaunchConfiguration("joystick_config_file")
 
     use_actuator_interface = PythonExpression([
             "'false' if '", use_simulation, "' == 'true' else 'true'"
         ])
     declared_arguments = [
         DeclareLaunchArgument(
-            "gui", 
-            default_value="true", 
+            "gui",
+            default_value="true",
             description="Start RViz2 automatically with this launch file."
         ),
         DeclareLaunchArgument(
-            "use_simulation", 
-            default_value="false", 
+            "use_simulation",
+            default_value="false",
             description="Whether to launch the Gazebo simulation environment"
+        ),
+        DeclareLaunchArgument(
+            "joystick_config_file",
+            default_value=PathJoinSubstitution([
+                FindPackageShare("joystick_mapper"),
+                "config",
+                "joystick_3d.yaml"
+            ]),
+            description="Joystick mapper parameter file.",
         ),
     ]
 
     # --------------------------------------------------------------------------
     # File Paths & Substitutions
     # --------------------------------------------------------------------------
-    # Config Files   
+    # Config Files
     velocity_config = PathJoinSubstitution([
         FindPackageShare("cartesian_command_manager"), "config", "explorer_params.yaml"
     ])
@@ -47,7 +56,7 @@ def generate_launch_description():
             'gui': gui,
             'use_sim_time': use_simulation,
             'rviz_delay': '3.0',
-            'extra_controllers_config': velocity_config, 
+            'extra_controllers_config': velocity_config,
             'use_custom_controllers': "true"
         }.items(),
         condition=IfCondition(use_simulation)
@@ -62,19 +71,19 @@ def generate_launch_description():
             'can_port': "can0",
             'host_id': "45",
             'use_POC2': "true",
-            'rviz_delay': '3.0', 
+            'rviz_delay': '3.0',
             'extra_controllers_config': velocity_config,
             'use_custom_controllers': "true"
 
         }.items(),
-        condition=UnlessCondition(use_simulation) 
+        condition=UnlessCondition(use_simulation)
     )
 
     # --------------------------------------------------------------------------
     # Controllers spawner
     # --------------------------------------------------------------------------
     spawner_qontrol = Node(
-        package="controller_manager", 
+        package="controller_manager",
         executable="spawner",
         arguments=["qontrol_explorer", "--controller-manager", "/controller_manager"],
     )
@@ -103,12 +112,17 @@ def generate_launch_description():
         name="joy_node",
     )
 
-    joystick_mapper_node = Node(
-        package="joystick_command_mapper",
-        executable="joystick_command_mapper_node",
-        name="joystick_command_mapper",
-        output="screen",
-        parameters=[velocity_config],
+    joystick_mapper_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                FindPackageShare("joystick_mapper"),
+                "launch",
+                "joystick_mapper.launch.py",
+            ])
+        ),
+        launch_arguments={
+            "config_file": joystick_config_file,
+        }.items(),
     )
 
     # --------------------------------------------------------------------------
@@ -128,7 +142,7 @@ def generate_launch_description():
         spawner_gripper_controller,
         manager_node,
         joy_node,
-        joystick_mapper_node
+        joystick_mapper_launch
     ]
 
     return LaunchDescription(declared_arguments + nodes_to_start)
